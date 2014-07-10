@@ -119,6 +119,7 @@ void bs_cb(BuxtonResponse response, void *data){
 	//struct vstatus set = *ret;
 	char * type = "Houston";
 	ret->status = 0;
+	//check response before switch
 	if (buxton_response_status(response)){
 		printf("Failed to set %s.\n", type);
 		return;
