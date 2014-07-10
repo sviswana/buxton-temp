@@ -1,0 +1,7 @@
+For buxton_open, a "file descriptor" is returned.  It will be >=0 if a connection was successful. Otherwise it will be a negative number and considered a failure.
+
+Also, the daemon debug says 
+	main():[312]: New client fd 5 connected through fd 4
+	add_pollfd():[990]: Added fd 5 to our poll list (accepting=0)
+	add_pollfd():[998]: Removing fd 5 from out list
+	terminate_client():[1221]: Closed connection from fd 5

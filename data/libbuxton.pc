@@ -1,0 +1,11 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: buxton
+Description: Library for buxton clients
+URL: https://github.com/sofar/buxton
+Version: 2
+Libs: -L${libdir} -lbuxton
+Cflags: -I${includedir}

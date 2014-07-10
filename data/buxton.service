@@ -1,0 +1,9 @@
+[Unit]
+Description=Buxton Configuration Service
+
+[Service]
+ExecStart=/usr/local/sbin/buxtond
+User=buxton
+
+[Install]
+WantedBy=multi-user.target

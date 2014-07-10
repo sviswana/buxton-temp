@@ -1,0 +1,633 @@
+From d334afb85c492981975fc3e58f2b45c83003f207 Mon Sep 17 00:00:00 2001
+From: Michelle Hansey <michelle.hansey@intel.com>
+Date: Tue, 1 Jul 2014 15:58:08 -0700
+Subject: [PATCH 949/949] Simplifying public Buxton API
+
+BuxtonSimple is an API that allows users who are new to Buxton or
+familiar with vconf to utilize Buxton. There are fewer function
+arguments for each function.  This is possibile because there are
+default call back functions and a global client and fd provided in
+the library. There are also newer functions similar to those found
+in the vconf API (such has set_int32). The opening of the client
+connection is embedded into each function called so the programmer
+does not have to call buxton_open().
+---
+ Makefile.am                         |  27 ++-
+ data/libbuxton-simp.pc.in           |  11 ++
+ demo/helloget.c                     |  18 +-
+ src/db/gdbm.c                       |   3 +
+ src/libbuxton-simp/buxton_simp      | Bin 0 -> 18587 bytes
+ src/libbuxton-simp/lbuxton-simp.c   | 319 ++++++++++++++++++++++++++++++++++++
+ src/libbuxton-simp/lbuxton-simp.sym |   6 +
+ 7 files changed, 365 insertions(+), 19 deletions(-)
+ create mode 100644 data/libbuxton-simp.pc.in
+ create mode 100755 src/libbuxton-simp/buxton_simp
+ create mode 100644 src/libbuxton-simp/lbuxton-simp.c
+ create mode 100644 src/libbuxton-simp/lbuxton-simp.sym
+
+diff --git a/Makefile.am b/Makefile.am
+index 6242f7a..782a202 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -64,6 +64,8 @@ LIBBUXTON_AGE=0
+ pkgconfiglibdir=$(libdir)/pkgconfig
+ pkgconfiglib_DATA = \
+ 	data/libbuxton.pc
++pkgconfiglib_DATA = \
++	data/libbuxton-simp.pc
+ 
+ if MANPAGE
+ dist_man_MANS = \
+@@ -121,8 +123,10 @@ EXTRA_DIST = \
+ 	HACKING \
+ 	check_db_clean \
+ 	data/libbuxton.pc.in \
++	data/libbuxton-simp.pc.in \
+ 	docs/LICENSE.MIT \
+ 	src/libbuxton/lbuxton.sym \
++	src/libbuxton-simp/lbuxton-simp.sym \
+ 	test/test.load2 \
+ 	test/test.conf \
+ 	test/test-configurator.conf
+@@ -211,7 +215,25 @@ include_HEADERS += \
+ 	src/include/buxton.h
+ 
+ lib_LTLIBRARIES += \
+-	libbuxton.la
++	libbuxton.la \
++	libbuxton-simp.la
++libbuxton_simp_la_SOURCES = \
++	src/libbuxton-simp/lbuxton-simp.c
++
++libbuxton_simp_la_CFLAGS = \
++	$(AM_CFLAGS) \
++	@INIPARSER_CFLAGS@
++	-fvisibility=hidden
++
++libbuxton_simp_la_LDFLAGS = \
++	$(AM_LDFLAGS) \
++	@INIPARSER_LIBS@ \
++	-version-info $(LIBBUXTON_SIMP_CURRENT):$(LIBBUXTON_SIMP_REVISION):$(LIBBUXTON_SIMP_AGE) \
++	-Wl,--version-script=$(top_srcdir)/src/libbuxton-simp/lbuxton-simp.sym
++
++libbuxton_simp_la_LIBADD = \
++	libbuxton.la \
++	-ldl
+ 
+ libbuxton_la_SOURCES = \
+ 	src/libbuxton/lbuxton.c
+@@ -277,7 +299,8 @@ check_buxton_CFLAGS = \
+ check_buxton_LDADD = \
+ 	@CHECK_LIBS@ \
+ 	libbuxton.la \
+-	libbuxton-shared.la
++	libbuxton-shared.la \
++	libbuxton-simp.la
+ 
+ check_shared_lib_SOURCES = \
+ 	test/check_utils.c \
+diff --git a/data/libbuxton-simp.pc.in b/data/libbuxton-simp.pc.in
+new file mode 100644
+index 0000000..f2115ed
+--- /dev/null
++++ b/data/libbuxton-simp.pc.in
+@@ -0,0 +1,11 @@
++prefix=@prefix@
++exec_prefix=@exec_prefix@
++libdir=@libdir@
++includedir=@includedir@
++
++Name: buxton simple
++Description: Simple library for buxton clients
++URL: @PACKAGE_URL@
++Version: @PACKAGE_VERSION@
++Libs: -L${libdir} -lbuxton -lbuxton-simp
++Cflags: -I${includedir}
+diff --git a/demo/helloget.c b/demo/helloget.c
+index aceeec1..57e21b7 100644
+--- a/demo/helloget.c
++++ b/demo/helloget.c
+@@ -48,8 +48,6 @@ int main(void)
+ {
+ 	BuxtonClient client;
+ 	BuxtonKey key;
+-	struct pollfd pfd[1];
+-	int r;
+ 	int32_t gvalue = -1;
+ 	int fd;
+ 
+@@ -68,25 +66,11 @@ int main(void)
+ 	}
+ 
+ 	if (buxton_get_value(client, key, get_cb,
+-			     &gvalue, false)) {
++			     &gvalue, true)) {
+ 		printf("get call failed to run\n");
+ 		return -1;
+ 	}
+ 
+-	pfd[0].fd = fd;
+-	pfd[0].events = POLLIN;
+-	pfd[0].revents = 0;
+-	r = poll(pfd, 1, 5000);
+-
+-	if (r <= 0) {
+-		printf("poll error\n");
+-		return -1;
+-	}
+-
+-	if (!buxton_client_handle_response(client)) {
+-		printf("bad response from daemon\n");
+-		return -1;
+-	}
+ 
+ 	if (gvalue >= 0) {
+ 		printf("got value: %d\n", gvalue);
+diff --git a/src/db/gdbm.c b/src/db/gdbm.c
+index e8988c4..53578af 100644
+--- a/src/db/gdbm.c
++++ b/src/db/gdbm.c
+@@ -241,12 +241,14 @@ static int get_value(BuxtonLayer *layer, _BuxtonKey *key, BuxtonData *data,
+ 		 * set value
+ 		 */
+ 		ret = -ENOENT;
++		buxton_debug("!db\n");	
+ 		goto end;
+ 	}
+ 
+ 	value = gdbm_fetch(db, key_data);
+ 	if (value.dsize < 0 || value.dptr == NULL) {
+ 		ret = ENOENT;
++		buxton_debug("value.dsize < 0 || value.dptr == NULL\n");
+ 		goto end;
+ 	}
+ 
+@@ -261,6 +263,7 @@ static int get_value(BuxtonLayer *layer, _BuxtonKey *key, BuxtonData *data,
+ 			data->store.d_string.value = NULL;
+ 		}
+ 		ret = EINVAL;
++		buxton_debug("data->type != key->type\n");
+ 		goto end;
+ 	}
+ 	ret = 0;
+diff --git a/src/libbuxton-simp/buxton_simp b/src/libbuxton-simp/buxton_simp
+new file mode 100755
+index 0000000000000000000000000000000000000000..625e0483bcad37f40dbc4bf40a8ab54eaf076194
+GIT binary patch
+literal 18587
+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
+a8Zg91D0rUfD;3!qf)T^th!-uXV*dvY-?d`^
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/libbuxton-simp/lbuxton-simp.c b/src/libbuxton-simp/lbuxton-simp.c
+new file mode 100644
+index 0000000..53d6849
+--- /dev/null
++++ b/src/libbuxton-simp/lbuxton-simp.c
+@@ -0,0 +1,319 @@
++#include <poll.h>
++#include <inttypes.h>
++#include <time.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include "buxton.h"
++
++static BuxtonClient client=NULL;
++static int fd =-1;
++static struct pollfd pfd[1];
++static int r;
++/*Open client connection*/
++void sbuxton_open(void)
++{
++	if ((fd= buxton_open(&client)) <0 ){
++		printf("Couldn't connect.\n");
++		return;
++	}
++	printf("Connection successful.\n");
++}
++/*Make sure client connection is open*/
++void client_connection(void)
++{
++	/*Check if client connection is open*/
++	if(!client){
++		/*Open connection if needed*/
++		sbuxton_open();
++	}
++}
++/*Public poll timeout setter*/
++/*Polling*/
++void run_poll(int timeout)
++{
++	pfd[0].fd = fd;
++	pfd[0].events = POLLIN;
++	pfd[0].revents = 0;
++	r = poll(pfd, 1, timeout);
++	
++	if (r <= 0){
++		printf("poll error\n");
++		return;
++	}
++	if (!buxton_client_handle_response(client)){
++		printf("bad response from daemon\n");
++		return;
++	}
++}
++/*buxton_set_value callback and function for int32_t*/
++void bsi32_cb(BuxtonResponse response, void *data)
++{
++	int32_t *ret=(int32_t*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set int32_t.\n");
++		return;
++	}
++	printf("Value has been set: %i(int32_t)\n", *ret);
++}
++void buxtond_set_int32(BuxtonKey key, int32_t value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	/*check if a key has been created*/
++	/*create a key if needed*/
++	/*call buxton_set_value for type INT32i*/
++	if (buxton_set_value(client, key, &value, bsi32_cb, &value, true)){
++		printf("Set int32_t call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for string*/
++void bss_cb(BuxtonResponse response, void *data)
++{
++	char **ret=(char**)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set string.\n");
++		return;
++	}
++	printf("Value has been set: %s(string)\n", *ret);
++}
++void buxtond_set_string(BuxtonKey key, char *value )
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if (buxton_set_value(client, key, &value, bss_cb, &value, true)){
++		printf("Set string call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for uint32_t*/
++void bsui32_cb(BuxtonResponse response, void *data)
++{
++	uint32_t *ret=(uint32_t*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set uint32_t.\n");
++		return;
++	}
++	printf("Value has been set: %i(uint32_t)\n", *ret);
++}
++void buxtond_set_uint32(BuxtonKey key, uint32_t value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if (buxton_set_value(client, key, &value, bsui32_cb, &value, true)){
++		printf("Set uint32_t call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for int64_t*/
++void bsi64_cb(BuxtonResponse response, void *data)
++{
++	int64_t *ret = (int64_t*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set int64_t.\n");
++		return;
++	}
++	printf("Value has been set: ""%"PRId64"(int64_t)\n", *ret);
++}
++void buxtond_set_int64(BuxtonKey key, int64_t value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if(buxton_set_value(client, key, &value, bsi64_cb, &value, true)){
++		printf("Set int64_t call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for uint64_t*/
++void bsui64_cb(BuxtonResponse response, void *data)
++{
++	uint64_t *ret = (uint64_t*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set uint64_t.\n");
++		return;
++	}
++	printf("Value has been set: ""%"PRIu64"(uint64_t)\n", *ret);
++}
++void buxtond_set_uint64(BuxtonKey key, uint64_t value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if(buxton_set_value(client, key, &value, bsui64_cb, &value, true)){
++		printf("Set uint64_t call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for float*/
++void bsf_cb(BuxtonResponse response, void *data)
++{
++	float *ret = (float*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set float.\n");
++		return;
++	}
++	printf("Value has been set: %f(float)\n", *ret);
++}
++void buxtond_set_float(BuxtonKey key, float value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if(buxton_set_value(client, key, &value, bsf_cb, &value, true)){
++		printf("Set float call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for double*/
++void bsd_cb(BuxtonResponse response, void *data)
++{
++	double *ret = (double*)data;
++	if (buxton_response_status(response)){
++		printf("Failed to set double.\n");
++		return;
++	}
++	printf("Value has been set: %e(double)\n", *ret);
++}
++void buxtond_set_double(BuxtonKey key, double value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if(buxton_set_value(client, key, &value, bsd_cb, &value, true)){
++		printf("Set double call failed.\n");
++	}
++}
++/*buxton_set_value callback and function for boolean*/
++void bsb_cb(BuxtonResponse response, void *data)
++{
++	bool *ret = (bool*)data;
++	if(buxton_response_status(response)){
++		printf("Failed to set boolean.\n");
++		return;
++	}
++	printf("Value has been set: %i(bool)\n", *ret);
++}
++void buxtond_set_bool(BuxtonKey key, bool value)
++{
++	/*make sure client connection is open*/
++	client_connection();
++	if(buxton_set_value(client, key, &value, bsb_cb, &value, true)){
++		printf("Set bool call failed.\n");
++	}
++}
++/*create a client side group TODO: create BuxtonGroup type*/
++BuxtonKey buxton_group_create(char *name, char *layer)
++{
++	client_connection();
++	BuxtonKey ret = buxton_key_create(name, NULL, layer, STRING);
++	return ret;
++}
++/*create a buxtond side group*/
++void buxtond_create_group(BuxtonKey group)
++{
++	client_connection();
++	if (buxton_create_group(client, group, NULL, NULL, true)){
++		printf("Create group call failed.\n");
++		buxton_key_free(group);
++		return;
++	}
++	/*TODO*/
++	//buxton_key_free(group);
++}
++BuxtonKey buxtond_create_group2(char *group_name, char *layer)
++{
++	client_connection();
++	BuxtonKey group = buxton_key_create(group_name, NULL, layer, STRING);
++	if (buxton_create_group(client, group, NULL, NULL, true)){
++		printf("Create group call failed.\n");
++		buxton_key_free(group);
++		return;
++	}
++	return group;
++	/*Buxton free key? TODO*/
++}
++/*buxton_remove_group callback and function*/
++void rg_cb(BuxtonResponse response, void *data)
++{
++	if (buxton_response_status(response) != 0){
++		printf("Failed to remove group.\n");
++	} else {
++		printf("Removed group.\n");
++	}
++}
++void buxtond_remove_group(BuxtonKey group)
++{
++	client_connection();
++	if (buxton_remove_group(client, group, rg_cb, NULL, true)){
++		printf("Remove group call failed.\n");
++	}
++}
++void buxtond_remove_group2(char *group_name, char *layer)
++{
++	client_connection();
++	BuxtonKey group = buxton_group_create(group_name, layer);
++	if (buxton_remove_group(client, group, rg_cb, NULL, true)){
++		printf("Remove group call failed.\n");
++	}
++}
++/*buxton_get_value callback and function*/
++
++/*buxton_notifications*/
++void buxtond_register_notification(BuxtonKey key)
++{
++	if (buxton_register_notificatio(client, key, brn_cb, &status, true)){
++		printf("Buxton register notification call failed.\n");
++		return;
++	}
++	//run_poll();
++}
++/*DEMONSTRATION*/
++int main(void)
++{
++	/*Create group*/
++	BuxtonKey sGroup = buxtond_create_group2("tg_s1", "user");
++	//buxtond_create_group(sGroup);
++	/*Test string setting*/
++	char * s="Watermelon";
++	printf("Key should be set to %s.\n", s);
++	BuxtonKey sKey = buxton_key_create("tg_s1", "tk_s1", "user", STRING);
++	buxtond_set_string(sKey, s);
++	buxton_key_free(sKey);
++	/*Test int32 setting*/
++	srand(time(NULL));
++	int32_t i=rand()%100+1;
++	printf("Key should be set to %i.\n",i);
++	BuxtonKey i32key = buxton_key_create("tg_s1", "tk_i32", "user", INT32);
++	buxtond_set_int32(i32key, i);
++	buxton_key_free(i32key);
++	/*Test uint32 setting*/
++	uint32_t ui32 = rand()%50+1;
++	printf("Key should be set to %u.\n", ui32);
++	BuxtonKey ui32key = buxton_key_create("tg_s1", "tk_ui32", "user", UINT32);
++	buxtond_set_uint32(ui32key, ui32);
++	buxton_key_free(ui32key);
++	/*Test  int64 setting*/
++	int64_t i64 = rand()%1000+1;
++	printf("Key should be set to ""%"PRId64".\n", i64);
++	BuxtonKey i64key = buxton_key_create("tg_s1", "tk_i64", "user", INT64);
++	buxtond_set_int64(i64key, i64);
++	buxton_key_free(i64key);
++	/*Test uint64 setting*/
++	uint64_t ui64 = rand()%500+1;
++	printf("Key should be set to ""%"PRIu64".\n", ui64);
++	BuxtonKey ui64key = buxton_key_create("tg_s1", "tk_ui64", "user", UINT64);
++	buxtond_set_uint64(ui64key, ui64);
++	buxton_key_free(ui64key);
++	/*Test float setting*/
++	float f = rand()%9+1;
++	printf("Key should be set to %e.\n", f);
++	BuxtonKey fkey = buxton_key_create("tg_s1", "tk_f", "user", FLOAT);
++	buxtond_set_float(fkey, f);
++	buxton_key_free(fkey);
++	/*Test double setting*/
++	double d = rand()%7000+1;
++	printf("Key should be set to %e.\n", d);
++	BuxtonKey dkey = buxton_key_create("tg_s1", "tk_d", "user", DOUBLE);
++	buxtond_set_double(dkey, d);
++	buxton_key_free(dkey);
++	/*Test boolean setting*/
++	bool b = true;
++	printf("Key should be set to %i.\n", b);
++	BuxtonKey bkey = buxton_key_create("tg_s1", "tk_b", "user", BOOLEAN);
++	buxtond_set_bool(bkey, b);
++	buxton_key_free(bkey);
++	/*Close connection*/
++	buxtond_remove_group2("tg_s1", "user");
++	buxton_close(client);
++}
+diff --git a/src/libbuxton-simp/lbuxton-simp.sym b/src/libbuxton-simp/lbuxton-simp.sym
+new file mode 100644
+index 0000000..5da0ca9
+--- /dev/null
++++ b/src/libbuxton-simp/lbuxton-simp.sym
+@@ -0,0 +1,6 @@
++BUXTON_1 {
++	global:
++		buxton_set_int32;
++	local:
++		*;
++};
+-- 
+1.9.1
+
