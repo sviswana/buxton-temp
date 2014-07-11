@@ -1,6 +1,5 @@
 #include <errno.h>
 #include <string.h>
-#include <poll.h>
 #include <inttypes.h>
 #include <time.h>
 #include <stdio.h>
@@ -25,7 +24,6 @@ typedef struct vstatus {
 		bool bval;
 	};
 } vstatus;
-//static struct vstatus getVal;
 /*Save errno*/
 int saved_errno;
 void save_errno(void)
