@@ -9,8 +9,6 @@
 
 static BuxtonClient client=NULL;
 static int fd =-1;
-static struct pollfd pfd[1];
-static int r;
 static char * _layer = NULL;
 static char * _group = NULL;
 typedef struct vstatus {
@@ -50,24 +48,6 @@ void client_connection(void)
 	if(!client){
 		/*Open connection if needed*/
 		sbuxton_open();
-	}
-}
-/*Public poll timeout setter*/
-/*Polling*/
-void run_poll(int timeout)
-{
-	pfd[0].fd = fd;
-	pfd[0].events = POLLIN;
-	pfd[0].revents = 0;
-	r = poll(pfd, 1, timeout);
-	
-	if (r <= 0){
-		printf("poll error\n");
-		return;
-	}
-	if (!buxton_client_handle_response(client)){
-		printf("bad response from daemon\n");
-		return;
 	}
 }
 /*Create group callback*/
@@ -117,11 +97,11 @@ void buxtond_set_group(char *group, char *layer)
 void bs_cb(BuxtonResponse response, void *data){
 	struct vstatus *ret = (struct vstatus*)data;
 	//struct vstatus set = *ret;
-	char * type = "Houston";
+	char * type = "HOUSTON";
 	ret->status = 0;
-	//check response before switch
+	/*check response before switch*/
 	if (buxton_response_status(response)){
-		printf("Failed to set %s.\n", type);
+		printf("Failed to set value.\n");
 		return;
 	}
 	ret->status =1;
